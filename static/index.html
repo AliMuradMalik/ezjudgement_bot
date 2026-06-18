@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EzJudgements</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --panel: #171a21;
+      --panel-2: #1f232c;
+      --border: #2a2f3a;
+      --text: #e6e8eb;
+      --muted: #9aa3b2;
+      --accent: #7aa2ff;
+      --accent-soft: #2a3a68;
+      --user: #1e3a2a;
+      --danger: #d9534f;
+      --tool: #3a2f1e;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+    }
+    header h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: .3px; }
+    header .meta { color: var(--muted); font-size: 12px; font-family: ui-monospace, monospace; }
+    header .spacer { flex: 1; }
+    header button {
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 10px;
+      font: inherit;
+      cursor: pointer;
+    }
+    header button:hover { border-color: var(--accent); }
+
+    #log {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      max-width: 900px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    .msg { padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border); white-space: pre-wrap; word-wrap: break-word; }
+    .msg.user { background: var(--user); align-self: flex-end; max-width: 80%; }
+    .msg.assistant { background: var(--panel); }
+    .msg.error { background: #3a1e1e; border-color: var(--danger); color: #ffd7d5; }
+    .msg .role {
+      font-size: 11px; color: var(--muted); text-transform: uppercase;
+      letter-spacing: 1px; margin-bottom: 6px;
+    }
+
+    .tool {
+      align-self: flex-start;
+      font-size: 12px;
+      color: var(--muted);
+      background: var(--tool);
+      border: 1px dashed var(--border);
+      border-radius: 999px;
+      padding: 4px 10px;
+    }
+    .tool.searching::after { content: "…"; }
+
+    .citations {
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px dashed var(--border);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .citations ol { margin: 4px 0 0; padding-left: 20px; }
+    .citations li { margin: 4px 0; }
+    .citations .cite-name { color: var(--muted); font-family: ui-monospace, monospace; }
+    .citations a {
+      color: var(--accent); text-decoration: none; margin-left: 8px;
+      border: 1px solid var(--border); border-radius: 6px; padding: 1px 8px;
+    }
+    .citations a:hover { border-color: var(--accent); }
+    .citations a::before { content: "📄 "; }
+
+    footer {
+      border-top: 1px solid var(--border);
+      background: var(--panel);
+      padding: 10px 16px;
+    }
+    .composer { max-width: 900px; margin: 0 auto; display: flex; gap: 8px; }
+    .composer textarea {
+      flex: 1;
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      resize: none;
+      font: inherit;
+      max-height: 200px;
+      min-height: 44px;
+    }
+    .composer textarea:focus { outline: none; border-color: var(--accent); }
+    .composer button {
+      background: var(--accent-soft);
+      color: var(--text);
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      padding: 0 18px;
+      font: inherit;
+      cursor: pointer;
+    }
+    .composer button:disabled { opacity: .5; cursor: not-allowed; }
+
+    .hint { color: var(--muted); font-size: 12px; text-align: center; padding: 40px 16px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>EzJudgements</h1>
+    <span class="meta" id="cid"></span>
+    <span class="spacer"></span>
+    <span class="meta" id="uid" title="your device id"></span>
+    <button id="new">New chat</button>
+  </header>
+
+  <div id="log">
+    <div class="hint">Ask a legal question. Your chats are saved on this device.</div>
+  </div>
+
+  <footer>
+    <form class="composer" id="composer">
+      <textarea id="input" placeholder="Ask about a judgement, statute, or principle…" rows="1" required></textarea>
+      <button id="send" type="submit">Send</button>
+    </form>
+  </footer>
+
+  <script>
+    const LS_USER = "ez_user_id";
+    const LS_CONV = "ez_conv_id";
+
+    const logEl = document.getElementById("log");
+    const inputEl = document.getElementById("input");
+    const sendBtn = document.getElementById("send");
+    const cidEl = document.getElementById("cid");
+    const uidEl = document.getElementById("uid");
+    const newBtn = document.getElementById("new");
+    const form = document.getElementById("composer");
+
+    // --- device identity --------------------------------------------------
+    function genUuid() {
+      if (crypto.randomUUID) return crypto.randomUUID();
+      return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+        (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c/4).toString(16));
+    }
+    let USER_ID = localStorage.getItem(LS_USER);
+    if (!USER_ID) { USER_ID = genUuid(); localStorage.setItem(LS_USER, USER_ID); }
+    uidEl.textContent = "user " + USER_ID.slice(0, 8);
+
+    // --- conversation id --------------------------------------------------
+    let conversationId = localStorage.getItem(LS_CONV) || null;
+    const setConvId = (id) => {
+      conversationId = id;
+      if (id) { localStorage.setItem(LS_CONV, id); cidEl.textContent = "conv " + id.slice(0, 8); }
+      else { localStorage.removeItem(LS_CONV); cidEl.textContent = ""; }
+    };
+    setConvId(conversationId);
+
+    newBtn.onclick = () => {
+      setConvId(null);
+      logEl.innerHTML = '<div class="hint">New conversation started.</div>';
+    };
+
+    // --- composer UX ------------------------------------------------------
+    inputEl.addEventListener("input", () => {
+      inputEl.style.height = "auto";
+      inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + "px";
+    });
+    inputEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); }
+    });
+
+    // --- DOM helpers ------------------------------------------------------
+    const el = (tag, cls, text) => {
+      const n = document.createElement(tag);
+      if (cls) n.className = cls;
+      if (text !== undefined) n.textContent = text;
+      return n;
+    };
+    const scroll = () => logEl.scrollTo({ top: logEl.scrollHeight, behavior: "smooth" });
+
+    function addUser(text) {
+      const hint = logEl.querySelector(".hint");
+      if (hint) hint.remove();
+      const m = el("div", "msg user");
+      m.appendChild(el("div", "role", "you"));
+      m.appendChild(el("div", "body", text));
+      logEl.appendChild(m);
+      scroll();
+    }
+    function addAssistantShell() {
+      const m = el("div", "msg assistant");
+      m.appendChild(el("div", "role", "assistant"));
+      const body = el("div", "body", "");
+      m.appendChild(body);
+      logEl.appendChild(m);
+      scroll();
+      return { root: m, body };
+    }
+    function addToolChip(label) {
+      const c = el("div", "tool", label);
+      logEl.appendChild(c);
+      scroll();
+      return c;
+    }
+    function addError(text) {
+      const m = el("div", "msg error");
+      m.appendChild(el("div", "role", "error"));
+      m.appendChild(el("div", "body", text));
+      logEl.appendChild(m);
+      scroll();
+    }
+
+    // --- SSE frame parser -------------------------------------------------
+    async function* parseSSE(response) {
+      const reader = response.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        // SSE spec allows CR, LF, or CRLF line endings — normalize to LF so
+        // our \n\n event-boundary split works regardless of server library.
+        buf = buf.replace(/\r\n|\r/g, "\n");
+        let idx;
+        while ((idx = buf.indexOf("\n\n")) >= 0) {
+          const chunk = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          let event = "message", data = "";
+          for (const line of chunk.split("\n")) {
+            if (line.startsWith("event:")) event = line.slice(6).trim();
+            else if (line.startsWith("data:")) data += line.slice(5).trimStart();
+          }
+          if (data) yield { event, data };
+        }
+      }
+    }
+
+    // --- submit -----------------------------------------------------------
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const message = inputEl.value.trim();
+      if (!message) return;
+
+      inputEl.value = "";
+      inputEl.style.height = "auto";
+      sendBtn.disabled = true;
+      addUser(message);
+
+      const body = { message };
+      if (conversationId) body.conversation_id = conversationId;
+
+      const shell = addAssistantShell();
+      let searchingChip = null;
+
+      try {
+        const resp = await fetch("/chat/stream", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-User-ID": USER_ID,
+          },
+          body: JSON.stringify(body),
+        });
+        if (!resp.ok) {
+          const txt = await resp.text();
+          throw new Error(`${resp.status}: ${txt}`);
+        }
+
+        for await (const { event, data } of parseSSE(resp)) {
+          let payload;
+          try { payload = JSON.parse(data); } catch { continue; }
+
+          if (event === "text.delta") {
+            shell.body.textContent += payload.delta || "";
+            scroll();
+          } else if (event === "tool.searching") {
+            if (!searchingChip) searchingChip = addToolChip("searching");
+            searchingChip.classList.add("searching");
+          } else if (event === "tool.searched") {
+            if (searchingChip) { searchingChip.remove(); searchingChip = null; }
+            const q = (payload.queries || []).join(", ") || "(no query)";
+            addToolChip("🔎 " + q);
+          } else if (event === "done") {
+            if (payload.citations?.length) {
+              const cites = el("div", "citations");
+              cites.appendChild(el("div", "", "Source documents"));
+              const ol = el("ol");
+              payload.citations.forEach(c => {
+                const li = el("li");
+                li.appendChild(el("span", "cite-name", c.title || c.filename || c.file_id));
+                const links = [];
+                if (c.judgment_url) links.push(["Judgment", c.judgment_url]);
+                if (c.headnote_url) links.push(["Headnote", c.headnote_url]);
+                if (c.url) links.push(["Web", c.url]);
+                links.forEach(([text, href]) => {
+                  const a = el("a", "", text);
+                  a.href = href;
+                  a.target = "_blank";
+                  a.rel = "noopener";
+                  li.appendChild(a);
+                });
+                ol.appendChild(li);
+              });
+              cites.appendChild(ol);
+              shell.root.appendChild(cites);
+            }
+          } else if (event === "persisted") {
+            if (payload.conversation_id) setConvId(payload.conversation_id);
+          } else if (event === "error") {
+            addError(payload.message || "unknown error");
+          }
+        }
+      } catch (err) {
+        addError(String(err.message || err));
+      } finally {
+        sendBtn.disabled = false;
+        inputEl.focus();
+      }
+    });
+
+    inputEl.focus();
+  </script>
+</body>
+</html>
